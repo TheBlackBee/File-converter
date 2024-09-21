@@ -1,0 +1,78 @@
+import os
+import zipfile
+from lxml import etree
+import ui
+
+def extract_model_xml(three_mf_path):
+    with zipfile.ZipFile(three_mf_path, 'r') as zip_ref:
+        zip_ref.extract('model.xml', os.path.dirname(three_mf_path))
+    return os.path.join(os.path.dirname(three_mf_path), 'model.xml')
+
+def read_metadata(model_xml_path):
+    tree = etree.parse(model_xml_path)
+    metadata = {
+        'title': tree.find('.//{http://schemas.microsoft.com/3dprinting/2015/01}title').text,
+        'author': tree.find('.//{http://schemas.microsoft.com/3dprinting/2015/01}author').text
+    }
+    return metadata
+
+def update_metadata(model_xml_path, new_metadata):
+    tree = etree.parse(model_xml_path)
+    tree.find('.//{http://schemas.microsoft.com/3dprinting/2015/01}title').text = new_metadata['title']
+    tree.find('.//{http://schemas.microsoft.com/3dprinting/2015/01}author').text = new_metadata['author']
+    tree.write(model_xml_path, xml_declaration=True, encoding='UTF-8')
+
+def repackage_3mf(original_3mf_path):
+    temp_dir = os.path.dirname(original_3mf_path)
+    new_3mf_path = os.path.join(temp_dir, f"updated_{os.path.basename(original_3mf_path)}")
+    
+    with zipfile.ZipFile(new_3mf_path, 'w') as zip_ref:
+        with zipfile.ZipFile(original_3mf_path, 'r') as original_zip:
+            for item in original_zip.namelist():
+                if item != 'model.xml':
+                    zip_ref.writestr(item, original_zip.read(item))
+        zip_ref.write(os.path.join(temp_dir, 'model.xml'), 'model.xml')
+
+    return new_3mf_path
+
+def process_3mf_files(file_paths):
+    metadata_list = []
+
+    for file_path in file_paths:
+        model_xml_path = extract_model_xml(file_path)
+        metadata = read_metadata(model_xml_path)
+        metadata_list.append(metadata)
+
+    common_metadata = metadata_list[0]
+
+    for file_path in file_paths:
+        model_xml_path = extract_model_xml(file_path)
+        update_metadata(model_xml_path, common_metadata)
+        new_file_path = repackage_3mf(file_path)
+        print(f"Updated and saved: {new_file_path}")
+
+class MyApp(ui.View):
+    def __init__(self):
+        self.title = '3MF Metadata Updater'
+        self.background_color = 'white'
+        self.button = ui.Button(title='Select 3MF Files')
+        self.button.center = (self.width / 2, self.height / 2)
+        self.button.flex = 'LRTB'
+        self.button.action = self.select_files
+        self.add_subview(self.button)
+
+    def select_files(self, sender):
+        from objc_util import ObjCClass
+        UIDocumentPicker = ObjCClass('UIDocumentPickerViewController')
+        picker = UIDocumentPicker.alloc().initWithDocumentTypes_inMode_(['public.zip'], 1)
+        picker.delegate = self
+        UIViewController = ObjCClass('UIViewController')
+        UIViewController.presentViewController_animated_completion_(picker, True, None)
+
+    def documentPicker_didPickDocumentsAtURLs_(self, picker, urls):
+        file_paths = [str(url.absoluteString()) for url in urls]
+        process_3mf_files(file_paths)
+
+if __name__ == '__main__':
+    app = MyApp()
+    app.present('sheet')
